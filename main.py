@@ -2,7 +2,6 @@ from fastapi import FastAPI, Depends, HTTPException
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from fastapi.security import OAuth2PasswordRequestForm
 from database import get_db
 from jose import jwt
 import models
@@ -14,8 +13,6 @@ app = FastAPI(
         "persistAuthorization": True
     }
 )
-
-
 
 @app.get('/contacts')
 def get_contacts(
@@ -190,15 +187,15 @@ def register_user(user:schemas.UserCreate, db: Session = Depends(get_db)):
 
 @app.post('/login')
 def login_user(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    user: schemas.UserLogin,
     db: Session = Depends(get_db)
 ):
     db_user = db.query(models.User).filter(
-        models.User.email == form_data.username
+        models.User.email == user.email
     ).first()
 
     if not db_user or not auth.verify_password(
-        form_data.password,
+        user.password,
         db_user.hashed_password
     ):
         raise HTTPException(

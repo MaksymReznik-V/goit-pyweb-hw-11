@@ -38,7 +38,7 @@ def create_access_token(data: dict):
 
     expire = datetime.now(timezone.utc)+timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({'exp': expire})
+    to_encode.update({'exp': expire, 'type': 'access'})
 
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -58,6 +58,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             SECRET_KEY,
             algorithms=[ALGORITHM]
         )
+
+        if payload.get("type") != "access":
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid token type"
+            )
 
         user_id = payload.get("sub")
         if user_id is None:
