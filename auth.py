@@ -89,3 +89,35 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         )
 
     return db_user
+
+def create_email_token(data: dict):
+    to_encode = data.copy()
+
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    to_encode.update({
+        "exp": expire,
+        "type": "email_verification"
+    })
+
+    return jwt.encode(
+        to_encode,
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+def verify_email_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
+        if payload.get("type") != "email_verification":
+            return None
+
+        return payload.get("sub")
+
+    except Exception:
+        return None

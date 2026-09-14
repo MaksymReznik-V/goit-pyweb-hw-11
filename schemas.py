@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import date
 
 class Contact(BaseModel):
@@ -16,8 +16,11 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
+    is_verified: bool
 
-    model_config = {'from_attributes': True}
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 class UserLogin(BaseModel):
     email: EmailStr

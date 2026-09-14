@@ -1,5 +1,5 @@
 from database import Base
-from sqlalchemy import Integer, String, Date, Column, ForeignKey
+from sqlalchemy import Integer, String, Date, Column, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 
 class Contact(Base):
@@ -21,6 +21,8 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(250), unique=True, nullable=False)
     hashed_password = Column(String(500), nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    avatar_url = Column(String(500), nullable=True)
 
     contacts = relationship('Contact', back_populates='user')
 

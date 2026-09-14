@@ -1,18 +1,56 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from dotenv import load_dotenv
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from email_service import send_verification_email
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from database import get_db
 from jose import jwt
+import os
+import cloudinary
+import cloudinary.uploader
 import models
 import schemas
 import auth
+
+load_dotenv()
+
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True
+)
 
 app = FastAPI(
     swagger_ui_parameters={
         "persistAuthorization": True
     }
 )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+limiter = Limiter(key_func=get_remote_address)
+
+app.state.limiter = limiter
+
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler
+)
+
+app.add_middleware(SlowAPIMiddleware)
 
 @app.get('/contacts')
 def get_contacts(
@@ -88,7 +126,9 @@ def get_contacts(
     return contact
 
 @app.post('/contacts', status_code=201)
+@limiter.limit("5/minute")
 def create_contact(
+    request: Request,
     contact: schemas.Contact,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
@@ -183,6 +223,15 @@ def register_user(user:schemas.UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
+    verification_token = auth.create_email_token(
+        {"sub": str(new_user.id)}
+    )
+
+    send_verification_email(
+        new_user.email,
+        verification_token
+    )
+
     return new_user
 
 @app.post('/login')
@@ -269,3 +318,65 @@ def refresh_access_token(
         "token_type": "bearer"
     }
 
+
+@app.get("/verify-email")
+def verify_email(
+    token: str,
+    db: Session = Depends(get_db)
+):
+    user_id = auth.verify_email_token(token)
+
+    if user_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired verification token"
+        )
+
+    db_user = db.query(models.User).filter(
+        models.User.id == int(user_id)
+    ).first()
+
+    if db_user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    if db_user.is_verified:
+        return {
+            "message": "Email already verified"
+        }
+
+    db_user.is_verified = True
+
+    db.commit()
+    db.refresh(db_user)
+
+    return {
+        "message": "Email successfully verified"
+    }
+
+@app.patch("/users/avatar")
+def update_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    result = cloudinary.uploader.upload(
+        file.file,
+        folder="avatars",
+        public_id=f"user_{current_user.id}",
+        overwrite=True
+    )
+
+    avatar_url = result.get("secure_url")
+
+    current_user.avatar_url = avatar_url
+
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "message": "Avatar updated successfully",
+        "avatar_url": avatar_url
+    }
