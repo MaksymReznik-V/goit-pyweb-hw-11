@@ -28,12 +28,43 @@ pwd_context = CryptContext(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 def hash_password(password: str):
+    """
+    Hash a plain-text password.
+
+    Args:
+        password: Plain-text password provided by the user.
+
+    Returns:
+        str: Hashed password generated using bcrypt.
+    """
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str):
+    """
+    Verify a plain-text password against its stored hash.
+
+    Args:
+        plain_password: Plain-text password to verify.
+        hashed_password: Previously hashed password.
+
+    Returns:
+        bool: True if the password matches the hash, otherwise False.
+    """
     return pwd_context.verify(plain_password, hashed_password)
 
 def create_access_token(data: dict):
+    """
+    Create a JWT access token.
+
+    The token contains the provided payload, an expiration time,
+    and the ``access`` token type.
+
+    Args:
+        data: Data to encode into the JWT token.
+
+    Returns:
+        str: Encoded JWT access token.
+    """
     to_encode = data.copy()
 
     expire = datetime.now(timezone.utc)+timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -43,6 +74,15 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def create_refresh_token(data: dict):
+    """
+    Create a JWT refresh token.
+
+    Args:
+        data: Data to encode into the JWT token.
+
+    Returns:
+        str: Encoded JWT refresh token.
+    """
     to_encode = data.copy()
 
     expire = datetime.now(timezone.utc)+timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -52,6 +92,24 @@ def create_refresh_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """
+    Get the currently authenticated user from an access token.
+
+    The function decodes the JWT token, verifies that it is an
+    access token, extracts the user identifier and retrieves the
+    corresponding user from the database.
+
+    Args:
+        token: JWT access token obtained from the Authorization header.
+        db: SQLAlchemy database session.
+
+    Returns:
+        models.User: Authenticated user.
+
+    Raises:
+        HTTPException: If the token is invalid, has an incorrect type,
+            or the user does not exist.
+    """
     try:
         payload = jwt.decode(
             token,
@@ -91,6 +149,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return db_user
 
 def create_email_token(data: dict):
+    """
+    Create a JWT token for email verification.
+
+    The verification token is valid for 24 hours.
+
+    Args:
+        data: Data to encode into the verification token.
+
+    Returns:
+        str: Encoded JWT email verification token.
+    """
     to_encode = data.copy()
 
     expire = datetime.now(timezone.utc) + timedelta(hours=24)
@@ -107,6 +176,16 @@ def create_email_token(data: dict):
     )
 
 def verify_email_token(token: str):
+    """
+    Verify an email verification JWT token.
+
+    Args:
+        token: JWT email verification token.
+
+    Returns:
+        str | None: Subject stored in the token if it is valid,
+        otherwise None.
+    """
     try:
         payload = jwt.decode(
             token,

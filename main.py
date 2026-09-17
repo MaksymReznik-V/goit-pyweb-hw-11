@@ -9,15 +9,16 @@ from slowapi import _rate_limit_exceeded_handler
 from email_service import send_verification_email
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 from database import get_db
 from jose import jwt
+from repository import contacts as repository_contacts
 import os
 import cloudinary
 import cloudinary.uploader
 import models
 import schemas
 import auth
+
 
 load_dotenv()
 
@@ -52,16 +53,25 @@ app.add_exception_handler(
 
 app.add_middleware(SlowAPIMiddleware)
 
-@app.get('/contacts')
+@app.get("/contacts")
 def get_contacts(
-        db: Session = Depends(get_db),
-        current_user: models.User = Depends(auth.get_current_user)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
 ):
-    contacts = db.query(models.Contact).filter(
-        models.Contact.user_id == current_user.id
-    ).all()
+    """
+    Retrieve all contacts belonging to the current user.
 
-    return contacts
+    Args:
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        list: List of contacts owned by the current user.
+    """
+    return repository_contacts.get_contacts(
+        db=db,
+        user_id=current_user.id
+    )
 
 @app.get('/contacts/search')
 def contact_search(
@@ -69,22 +79,38 @@ def contact_search(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(auth.get_current_user)
 ):
-    contacts = db.query(models.Contact).filter(
-        models.Contact.user_id == current_user.id,
-        or_(
-            models.Contact.name.ilike(f'%{query}%'),
-            models.Contact.last_name.ilike(f'%{query}%'),
-            models.Contact.email.ilike(f'%{query}%')
-        )
-    ).all()
+    """
+    Search the current user's contacts.
 
-    return contacts
+    Args:
+        query: Search string.
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        list: Contacts matching the search query.
+    """
+    return repository_contacts.search_contacts(
+        query=query,
+        db=db,
+        user_id=current_user.id
+    )
 
 @app.get('/contacts/birthdays/')
 def upcoming_birthdays(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(auth.get_current_user)
 ):
+    """
+    Retrieve contacts with birthdays in the next seven days.
+
+    Args:
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        list: Contacts whose birthdays occur within the next seven days.
+    """
     today = date.today()
     next_week = today + timedelta(days=7)
 
@@ -108,14 +134,30 @@ def upcoming_birthdays(
     return upcoming
 
 @app.get('/contacts/{contact_id}')
-def get_contacts(
-        contact_id: int, db: Session = Depends(get_db),
+def get_contact(
+        contact_id: int,
+        db: Session = Depends(get_db),
         current_user: models.User = Depends(auth.get_current_user)
 ):
-    contact = db.query(models.Contact).filter(
-        models.Contact.id == contact_id,
-        models.Contact.user_id == current_user.id
-    ).first()
+    """
+    Retrieve a contact by its identifier.
+
+    Args:
+        contact_id: Identifier of the contact.
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        models.Contact: Requested contact.
+
+    Raises:
+        HTTPException: If the contact cannot be found.
+    """
+    contact = repository_contacts.get_contact(
+        contact_id=contact_id,
+        db=db,
+        user_id=current_user.id
+    )
 
     if contact is None:
         raise HTTPException(
@@ -128,26 +170,28 @@ def get_contacts(
 @app.post('/contacts', status_code=201)
 @limiter.limit("5/minute")
 def create_contact(
-    request: Request,
-    contact: schemas.Contact,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user)
+        request: Request,
+        contact: schemas.Contact,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_user)
 ):
-    new_contact = models.Contact(
-        user_id=current_user.id,
-        name=contact.name,
-        last_name=contact.last_name,
-        email=contact.email,
-        phone=contact.phone,
-        birthday=contact.birthday,
-        additional_info=contact.additional_info
+    """
+    Create a new contact for the authenticated user.
+
+    Args:
+        request: Current FastAPI request.
+        contact: Contact data received from the client.
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        models.Contact: Newly created contact.
+    """
+    return repository_contacts.create_contact(
+        contact=contact,
+        db=db,
+        user_id=current_user.id
     )
-
-    db.add(new_contact)
-    db.commit()
-    db.refresh(new_contact)
-
-    return new_contact
 
 @app.put('/contacts/{contact_id}')
 def update_contact(
@@ -156,26 +200,33 @@ def update_contact(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(auth.get_current_user)
 ):
-    db_contact = db.query(models.Contact).filter(
-        models.Contact.id == contact_id,
-        models.Contact.user_id == current_user.id
-    ).first()
+    """
+    Update an existing contact.
+
+    Args:
+        contact_id: Identifier of the contact to update.
+        contact: New contact data.
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        models.Contact: Updated contact.
+
+    Raises:
+        HTTPException: If the contact cannot be found.
+    """
+    db_contact = repository_contacts.update_contact(
+        contact_id=contact_id,
+        contact=contact,
+        db=db,
+        user_id=current_user.id
+    )
 
     if db_contact is None:
         raise HTTPException(
             status_code=404,
             detail="Contact not found"
         )
-
-    db_contact.name = contact.name
-    db_contact.last_name = contact.last_name
-    db_contact.email = contact.email
-    db_contact.phone = contact.phone
-    db_contact.birthday = contact.birthday
-    db_contact.additional_info = contact.additional_info
-
-    db.commit()
-    db.refresh(db_contact)
 
     return db_contact
 
@@ -183,19 +234,33 @@ def update_contact(
 def contact_delete(
         contact_id: int,
         db: Session = Depends(get_db),
-        current_user: models.User = Depends(auth.get_current_user)):
-    db_contact = db.query(models.Contact).filter(
-        models.Contact.id == contact_id,
-        models.Contact.user_id == current_user.id
-    ).first()
+        current_user: models.User = Depends(auth.get_current_user)
+):
+    """
+    Delete a contact belonging to the current user.
+
+    Args:
+        contact_id: Identifier of the contact to delete.
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        dict: Confirmation message.
+
+    Raises:
+        HTTPException: If the contact cannot be found.
+    """
+    db_contact = repository_contacts.delete_contact(
+        contact_id=contact_id,
+        db=db,
+        user_id=current_user.id
+    )
 
     if db_contact is None:
         raise HTTPException(
             status_code=404,
             detail="Contact not found"
         )
-    db.delete(db_contact)
-    db.commit()
 
     return {"message": "Contact deleted"}
 
@@ -204,6 +269,22 @@ def contact_delete(
     status_code=201,
     response_model=schemas.UserResponse)
 def register_user(user:schemas.UserCreate, db: Session = Depends(get_db)):
+    """
+    Register a new user.
+
+    The password is hashed before storage and an email verification
+    message is sent to the registered email address.
+
+    Args:
+        user: User registration data.
+        db: SQLAlchemy database session.
+
+    Returns:
+        schemas.UserResponse: Newly registered user.
+
+    Raises:
+        HTTPException: If a user with the email already exists.
+    """
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
 
     if existing_user:
@@ -239,6 +320,19 @@ def login_user(
     user: schemas.UserLogin,
     db: Session = Depends(get_db)
 ):
+    """
+    Authenticate a user and generate JWT tokens.
+
+    Args:
+        user: User login credentials.
+        db: SQLAlchemy database session.
+
+    Returns:
+        dict: Access token, refresh token, and token type.
+
+    Raises:
+        HTTPException: If the email or password is invalid.
+    """
     db_user = db.query(models.User).filter(
         models.User.email == user.email
     ).first()
@@ -271,6 +365,20 @@ def refresh_access_token(
     token_data: schemas.RefreshTokenRequest,
     db: Session = Depends(get_db)
 ):
+    """
+    Generate a new access token using a refresh token.
+
+    Args:
+        token_data: Request containing the refresh token.
+        db: SQLAlchemy database session.
+
+    Returns:
+        dict: New access token and token type.
+
+    Raises:
+        HTTPException: If the refresh token is invalid or the
+            associated user does not exist.
+    """
     refresh_token = token_data.refresh_token
 
     try:
@@ -324,6 +432,20 @@ def verify_email(
     token: str,
     db: Session = Depends(get_db)
 ):
+    """
+    Verify a user's email address.
+
+    Args:
+        token: Email verification JWT token.
+        db: SQLAlchemy database session.
+
+    Returns:
+        dict: Email verification status message.
+
+    Raises:
+        HTTPException: If the token is invalid or the user
+            cannot be found.
+    """
     user_id = auth.verify_email_token(token)
 
     if user_id is None:
@@ -362,6 +484,20 @@ def update_avatar(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
+    """
+    Upload and update the authenticated user's avatar.
+
+    The uploaded image is stored in Cloudinary and its URL is saved
+    in the user's database record.
+
+    Args:
+        file: Image uploaded by the user.
+        db: SQLAlchemy database session.
+        current_user: Currently authenticated user.
+
+    Returns:
+        dict: Success message and URL of the uploaded avatar.
+    """
     result = cloudinary.uploader.upload(
         file.file,
         folder="avatars",
